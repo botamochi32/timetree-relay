@@ -1,0 +1,54 @@
+name: timetree-sync
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch exporter
+        run: git clone --depth 1 https://github.com/mr-onadasky/timetree-live-ics.git exporter
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build exporter
+        working-directory: exporter
+        run: |
+          npm install
+          npm run build
+
+      - name: Export ICS
+        working-directory: exporter
+        env:
+          TIMETREE_EMAIL: ${{ secrets.TIMETREE_EMAIL }}
+          TIMETREE_PASSWORD: ${{ secrets.TIMETREE_PASSWORD }}
+          CAL_CODE: ${{ secrets.TIMETREE_CALENDAR_CODE }}
+          OUTPUT_PATH: ${{ github.workspace }}/out/timetree.ics
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          if [ -n "$CAL_CODE" ]; then export TIMETREE_CALENDAR_CODE="$CAL_CODE"; fi
+          timeout 150 node dist/index.js || true
+          test -s "$GITHUB_WORKSPACE/out/timetree.ics"
+
+      - name: Publish to gh-pages
+        env:
+          ICS_TOKEN: ${{ secrets.ICS_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$GITHUB_WORKSPACE/out"
+          mv timetree.ics "${ICS_TOKEN}.ics"
+          git init -b gh-pages
+          git config user.name "timetree-relay"
+          git config user.email "actions@users.noreply.github.com"
+          git add .
+          git commit -m "sync $(date -u +%FT%TZ)"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
